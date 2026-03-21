@@ -4,6 +4,8 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import chatRoute from './routes/chat.route';
 import insightsRoute from './routes/insights.route';
+import ttsRoute from './routes/tts.route';
+import merchantChatRoute from './routes/merchant-chat.route';
 
 export function createApp() {
   const app = express();
@@ -38,7 +40,9 @@ export function createApp() {
 
   // ─── Routes ───────────────────────────────────────────────────────────────────
   app.use('/api/agent/chat', chatRoute);
+  app.use('/api/agent/merchant-chat', merchantChatRoute);
   app.use('/api/agent/insights', insightsRoute);
+  app.use('/api/agent/tts', ttsRoute);
 
   return app;
 }

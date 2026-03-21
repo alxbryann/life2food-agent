@@ -1,10 +1,11 @@
-import { streamText, generateText } from 'ai';
+import { streamText, generateText, tool } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createDeepSeek } from '@ai-sdk/deepseek';
+import { z } from 'zod';
 import { env } from '../config/env';
-import { buildSystemPrompt } from './system-prompt';
+import { buildSystemPrompt, buildMerchantSystemPrompt } from './system-prompt';
 import {
   getPlatformStatsTool,
   getEarningsTool,
@@ -14,6 +15,12 @@ import {
   getMerchantsTool,
   getWithdrawalsTool,
 } from './tools';
+import {
+  fetchStoreOrders,
+  fetchEarnings,
+  fetchProducts,
+  fetchWithdrawals,
+} from '../lib/springboot-client';
 import type { ChatMessage, Insight } from '../types/agent.types';
 
 // ─── Model provider factory ───────────────────────────────────────────────────
@@ -86,6 +93,85 @@ export function chatStream(message: string, history: ChatMessage[] = []) {
     ],
     tools,
     maxSteps: 10, // allow multiple sequential tool calls per response
+  });
+}
+
+// ─── Merchant chat (streaming) — locked to a single store ────────────────────
+
+function createMerchantTools(storeOwnerId: number) {
+  return {
+    getMyOrders: tool({
+      description:
+        'Get all orders for my store. Returns order list with customer name, items, prices, store status, and creation date. Use this to answer questions about how much was sold today, pending orders, etc.',
+      parameters: z.object({}),
+      execute: async () => {
+        const orders = await fetchStoreOrders(storeOwnerId);
+        return { total: orders.length, orders };
+      },
+    }),
+    getMyEarnings: tool({
+      description:
+        'Get earnings summary for my store: total earned, balance available, in-process amount, completed orders count, unique clients, average order value, monthly breakdown and percent change vs previous month.',
+      parameters: z.object({}),
+      execute: async () => {
+        return await fetchEarnings(storeOwnerId);
+      },
+    }),
+    getMyProducts: tool({
+      description:
+        'Get products from my store. Optionally filter to only show products expiring within N days. Returns product name, price, stock, expiration date, and category.',
+      parameters: z.object({
+        expiringWithinDays: z
+          .number()
+          .optional()
+          .describe('Only return products expiring within this many days from today.'),
+      }),
+      execute: async ({ expiringWithinDays }) => {
+        const products = await fetchProducts(storeOwnerId);
+        if (expiringWithinDays !== undefined) {
+          const now = new Date();
+          const cutoff = new Date(now.getTime() + expiringWithinDays * 24 * 60 * 60 * 1000);
+          const expiring = products.filter((p) => {
+            if (!p.expirationDate) return false;
+            return new Date(p.expirationDate) <= cutoff;
+          });
+          return { total: expiring.length, products: expiring };
+        }
+        return { total: products.length, products };
+      },
+    }),
+    getMyWithdrawals: tool({
+      description: 'Get withdrawal history for my store.',
+      parameters: z.object({}),
+      execute: async () => {
+        const withdrawals = await fetchWithdrawals(storeOwnerId);
+        return { total: withdrawals.length, withdrawals };
+      },
+    }),
+  };
+}
+
+export function merchantChatStream(
+  message: string,
+  storeOwnerId: number,
+  storeName: string,
+  history: ChatMessage[] = [],
+) {
+  const model = resolveModel();
+  const merchantTools = createMerchantTools(storeOwnerId);
+
+  return streamText({
+    model,
+    system: buildMerchantSystemPrompt(storeOwnerId, storeName),
+    messages: [
+      ...history.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user', content: message },
+    ],
+    tools: merchantTools,
+    maxSteps: 5,
   });
 }
 

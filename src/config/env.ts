@@ -8,6 +8,7 @@ const envSchema = z.object({
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
   DEEPSEEK_API_KEY: z.string().optional(),
+  ELEVENLABS_API_KEY: z.string().optional(),
 
   // Model selection
   CHAT_MODEL: z.string().default('deepseek-chat'),
