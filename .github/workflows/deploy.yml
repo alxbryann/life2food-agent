@@ -27,21 +27,36 @@ jobs:
 
       - name: Deploy agent via rsync
         run: |
+          set -e
+          REMOTE_PATH="/home/${{ secrets.SSH_USER }}/life2food-agent"
+
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "mkdir -p /home/ec2-user/life2food-agent"
+            "mkdir -p ${REMOTE_PATH}"
 
-          rsync -avz --exclude 'node_modules' --exclude 'dist' --exclude '.git' --exclude '.env' \
+          # Si el repo del workflow es el monorepo, el código está en ./life2food-agent/.
+          # Si es el repo aislado, el código ya está en ./ (raíz).
+          SRC_DIR="."
+          if [ ! -f "./Dockerfile" ] && [ -f "./life2food-agent/Dockerfile" ]; then
+            SRC_DIR="./life2food-agent"
+          fi
+
+          rsync -avz \
+            --exclude 'node_modules' \
+            --exclude 'dist' \
+            --exclude '.git' \
+            --exclude '.env' \
+            --exclude '.github' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-            ./life2food-agent/ \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/ec2-user/life2food-agent/"
+            "${SRC_DIR}/" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${REMOTE_PATH}/"
 
       - name: Build Docker image and restart container
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'EOF'
           set -e
-          cd /home/ec2-user/life2food-agent
+          cd /home/${{ secrets.SSH_USER }}/life2food-agent
 
           echo "  → Construyendo imagen..."
           docker build -t lifo-agent:latest .
@@ -53,7 +68,7 @@ jobs:
           docker run -d \
             --name lifo-agent \
             --restart unless-stopped \
-            --env-file /home/ec2-user/life2food-agent/.env \
+            --env-file /home/${{ secrets.SSH_USER }}/life2food-agent/.env \
             -p 3002:3001 \
             lifo-agent:latest
 
