@@ -1,0 +1,67 @@
+name: Deploy Lifo Agent to Server
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key (robusto contra errores de formato)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+          ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo ✅ conectado"
+
+      - name: Deploy agent via rsync
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "mkdir -p /home/ec2-user/life2food-agent"
+
+          rsync -avz --exclude 'node_modules' --exclude 'dist' --exclude '.git' --exclude '.env' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./life2food-agent/ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/ec2-user/life2food-agent/"
+
+      - name: Build Docker image and restart container
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" << 'EOF'
+          set -e
+          cd /home/ec2-user/life2food-agent
+
+          echo "  → Construyendo imagen..."
+          docker build -t lifo-agent:latest .
+
+          echo "  → Reemplazando contenedor..."
+          docker stop lifo-agent 2>/dev/null || true
+          docker rm lifo-agent 2>/dev/null || true
+
+          docker run -d \
+            --name lifo-agent \
+            --restart unless-stopped \
+            --env-file /home/ec2-user/life2food-agent/.env \
+            -p 3002:3001 \
+            lifo-agent:latest
+
+          echo "  → Limpiando imágenes antiguas..."
+          docker image prune -f --filter "label!=keep" 2>/dev/null || true
+
+          sleep 2
+          STATUS=$(curl -s http://localhost:3002/health || true)
+          echo "  Health check: $STATUS"
+EOF
+
