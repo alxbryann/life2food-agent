@@ -63,5 +63,5 @@ jobs:
           sleep 2
           STATUS=$(curl -s http://localhost:3002/health || true)
           echo "  Health check: $STATUS"
-EOF
+          EOF
 
