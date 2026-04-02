@@ -1,5 +1,6 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Response } from 'express';
 import { generateInsights } from '../agent/agent';
+import { firebaseIdTokenFromRequest, runWithSpringBootAuth } from '../lib/backend-auth-context';
 import { verifyFirebaseToken, type AuthRequest } from '../lib/auth.middleware';
 import { getCached, setCached } from '../lib/cache';
 import type { InsightsResponse } from '../types/agent.types';
@@ -29,8 +30,10 @@ router.get('/:storeId', verifyFirebaseToken, async (req: AuthRequest, res: Respo
     return;
   }
 
+  const idToken = firebaseIdTokenFromRequest(req);
+
   try {
-    const insights = await generateInsights(storeId);
+    const insights = await runWithSpringBootAuth(idToken, () => generateInsights(storeId));
     const response: InsightsResponse = {
       insights,
       generatedAt: new Date().toISOString(),

@@ -1,5 +1,6 @@
 import { Router, type Response } from 'express';
 import { merchantChatStream } from '../agent/agent';
+import { firebaseIdTokenFromRequest, runWithSpringBootAuth } from '../lib/backend-auth-context';
 import { verifyFirebaseToken, type AuthRequest } from '../lib/auth.middleware';
 
 const router = Router();
@@ -27,29 +28,32 @@ router.post('/', verifyFirebaseToken, async (req: AuthRequest, res: Response) =>
   }
 
   const name = typeof storeName === 'string' && storeName.trim() ? storeName.trim() : 'tu tienda';
+  const idToken = firebaseIdTokenFromRequest(req);
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
+  await runWithSpringBootAuth(idToken, async () => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
 
-  try {
-    const stream = merchantChatStream(message.trim(), storeOwnerId, name, history);
+    try {
+      const stream = merchantChatStream(message.trim(), storeOwnerId, name, history);
 
-    for await (const part of stream.fullStream) {
-      if (part.type === 'text-delta') {
-        res.write(`data: ${JSON.stringify({ text: part.textDelta })}\n\n`);
+      for await (const part of stream.fullStream) {
+        if (part.type === 'text-delta') {
+          res.write(`data: ${JSON.stringify({ text: part.textDelta })}\n\n`);
+        }
       }
-    }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
-  } catch (err) {
-    console.error('[merchant-chat] error:', err);
-    const msg = err instanceof Error ? err.message : 'Internal error';
-    res.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
-    res.end();
-  }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (err) {
+      console.error('[merchant-chat] error:', err);
+      const msg = err instanceof Error ? err.message : 'Internal error';
+      res.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
+      res.end();
+    }
+  });
 });
 
 export default router;

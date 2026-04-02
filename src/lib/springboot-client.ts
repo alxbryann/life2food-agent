@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { getSpringBootFirebaseToken } from './backend-auth-context';
 import { getCached, setCached } from './cache';
 import type {
   EarningsSummaryDTO,
@@ -22,7 +23,12 @@ const headers: Record<string, string> = {
 };
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, { headers });
+  const token = getSpringBootFirebaseToken();
+  const requestHeaders: Record<string, string> = {
+    ...headers,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const res = await fetch(`${BASE_URL}${path}`, { headers: requestHeaders });
   if (!res.ok) {
     throw new Error(`Spring Boot API error: ${res.status} ${res.statusText} — ${path}`);
   }

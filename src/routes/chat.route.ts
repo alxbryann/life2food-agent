@@ -1,5 +1,6 @@
 import { Router, type Response } from 'express';
 import { chatStream } from '../agent/agent';
+import { firebaseIdTokenFromRequest, runWithSpringBootAuth } from '../lib/backend-auth-context';
 import { verifyFirebaseToken, type AuthRequest } from '../lib/auth.middleware';
 import type { ChatRequest } from '../types/agent.types';
 
@@ -21,31 +22,34 @@ router.post('/', verifyFirebaseToken, async (req: AuthRequest, res: Response) =>
     return;
   }
 
-  // Set SSE headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // disable Nginx buffering
+  const idToken = firebaseIdTokenFromRequest(req);
 
-  try {
-    const stream = chatStream(message.trim(), history);
+  await runWithSpringBootAuth(idToken, async () => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
 
-    for await (const part of stream.fullStream) {
-      if (part.type === 'reasoning') {
-        res.write(`data: ${JSON.stringify({ reasoning: part.textDelta })}\n\n`);
-      } else if (part.type === 'text-delta') {
-        res.write(`data: ${JSON.stringify({ text: part.textDelta })}\n\n`);
+    try {
+      const stream = chatStream(message.trim(), history);
+
+      for await (const part of stream.fullStream) {
+        if (part.type === 'reasoning') {
+          res.write(`data: ${JSON.stringify({ reasoning: part.textDelta })}\n\n`);
+        } else if (part.type === 'text-delta') {
+          res.write(`data: ${JSON.stringify({ text: part.textDelta })}\n\n`);
+        }
       }
-    }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
-  } catch (err) {
-    console.error('[chat] error:', err);
-    const message = err instanceof Error ? err.message : 'Internal error';
-    res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
-    res.end();
-  }
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch (err) {
+      console.error('[chat] error:', err);
+      const errMsg = err instanceof Error ? err.message : 'Internal error';
+      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+      res.end();
+    }
+  });
 });
 
 export default router;
