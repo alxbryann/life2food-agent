@@ -6,6 +6,7 @@ import chatRoute from './routes/chat.route';
 import insightsRoute from './routes/insights.route';
 import ttsRoute from './routes/tts.route';
 import merchantChatRoute from './routes/merchant-chat.route';
+import supportChatRoute from './routes/support-chat.route';
 
 export function createApp() {
   const app = express();
@@ -50,6 +51,7 @@ export function createApp() {
   app.use('/api/agent/merchant-chat', merchantChatRoute);
   app.use('/api/agent/insights', insightsRoute);
   app.use('/api/agent/tts', ttsRoute);
+  app.use('/api/agent/support-chat', supportChatRoute);
 
   return app;
 }

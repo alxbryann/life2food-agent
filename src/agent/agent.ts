@@ -6,6 +6,7 @@ import { createDeepSeek } from '@ai-sdk/deepseek';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { buildSystemPrompt, buildMerchantSystemPrompt } from './system-prompt';
+import { buildSupportSystemPrompt } from './support-prompt';
 import {
   getPlatformStatsTool,
   getEarningsTool,
@@ -20,7 +21,10 @@ import {
   fetchEarnings,
   fetchProducts,
   fetchWithdrawals,
+  fetchMerchantsPublic,
+  type PublicStore,
 } from '../lib/springboot-client';
+import type { TrimmedProduct } from '../types/api.types';
 import type { ChatMessage, Insight } from '../types/agent.types';
 
 // ─── Model provider factory ───────────────────────────────────────────────────
@@ -173,6 +177,124 @@ export function merchantChatStream(
     tools: merchantTools,
     maxSteps: 5,
   });
+}
+
+// ─── Support chat (non-streaming) — for end users via mobile app ─────────────
+
+const supportTools = {
+  searchProducts: tool({
+    description:
+      'Search available products on the platform by keyword (product name) and/or category. Returns matching products with name, price, store, and category. Use this when the user asks for food recommendations or wants to find a specific product.',
+    parameters: z.object({
+      query: z.string().optional().describe('Keyword to search in product name (e.g. "pizza", "ensalada", "pollo")'),
+      category: z.string().optional().describe('Filter by category name (e.g. "Panadería", "Lácteos", "Frutas")'),
+    }),
+    execute: async ({ query, category }) => {
+      const products = await fetchProducts();
+      let results = products;
+      if (query) {
+        const q = query.toLowerCase();
+        results = results.filter(
+          (p) => p.name.toLowerCase().includes(q) || (p.category ?? '').toLowerCase().includes(q),
+        );
+      }
+      if (category) {
+        const cat = category.toLowerCase();
+        results = results.filter((p) => (p.category ?? '').toLowerCase().includes(cat));
+      }
+      return { total: results.length, products: results.slice(0, 20) };
+    },
+  }),
+
+  searchStores: tool({
+    description:
+      'Search stores/merchants on the platform by type of business or name. Returns store name, category, address, description, and hours. Use this when the user asks "¿qué tiendas hay?", "¿dónde compro X?", or wants to find a specific type of store.',
+    parameters: z.object({
+      query: z
+        .string()
+        .optional()
+        .describe('Keyword to search in store name, category, or address (e.g. "pizza", "restaurante", "panadería")'),
+    }),
+    execute: async ({ query }) => {
+      const stores = await fetchMerchantsPublic();
+      if (!query) return { total: stores.length, stores: stores.slice(0, 20) };
+      const q = query.toLowerCase();
+      const results = stores.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          (s.businessCategory ?? '').toLowerCase().includes(q) ||
+          (s.address ?? '').toLowerCase().includes(q) ||
+          (s.storeDescription ?? '').toLowerCase().includes(q),
+      );
+      return { total: results.length, stores: results.slice(0, 20) };
+    },
+  }),
+
+  listCategories: tool({
+    description:
+      'List all product categories available on the platform. Use this when the user asks what types of food or categories are available.',
+    parameters: z.object({}),
+    execute: async () => {
+      const products = await fetchProducts();
+      const categories = [...new Set(products.map((p) => p.category).filter(Boolean))].sort();
+      return { total: categories.length, categories };
+    },
+  }),
+};
+
+export interface SupportChatResult {
+  text: string;
+  products: TrimmedProduct[];
+  stores: PublicStore[];
+}
+
+export async function supportChat(
+  message: string,
+  userId: number,
+  role: string,
+  history: ChatMessage[] = [],
+): Promise<SupportChatResult> {
+  const model = resolveModel();
+
+  const result = await generateText({
+    model,
+    system: buildSupportSystemPrompt(),
+    messages: [
+      ...history.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      })),
+      { role: 'user', content: message },
+    ],
+    tools: supportTools,
+    maxSteps: 5,
+  });
+
+  const fullText = result.steps
+    .map((s) => s.text)
+    .filter((t) => t && t.trim().length > 0)
+    .join('\n\n')
+    .trim();
+
+  // Extract structured results from tool calls across all steps
+  const products: TrimmedProduct[] = [];
+  const stores: PublicStore[] = [];
+
+  for (const step of result.steps) {
+    for (const tr of (step.toolResults ?? []) as Array<{ toolName: string; result: any }>) {
+      if (tr.toolName === 'searchProducts') {
+        products.push(...(tr.result.products ?? []));
+      } else if (tr.toolName === 'searchStores') {
+        stores.push(...(tr.result.stores ?? []));
+      }
+    }
+  }
+
+  return {
+    text: fullText || 'Lo siento, no pude procesar tu solicitud. Intenta de nuevo.',
+    products,
+    stores,
+  };
 }
 
 // ─── Insights (non-streaming) ─────────────────────────────────────────────────

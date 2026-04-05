@@ -116,6 +116,7 @@ export interface TrimmedProduct {
   amount: number | null;
   storeName: string | null;
   category: string | null;
+  imageUrl: string | null;
 }
 
 export interface TrimmedMerchant {

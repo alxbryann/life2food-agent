@@ -78,6 +78,7 @@ function trimProduct(p: Product): TrimmedProduct {
     amount: p.amount,
     storeName: p.user ? `${p.user.first_name} ${p.user.last_name}` : null,
     category: p.category?.name ?? null,
+    imageUrl: p.imageUrl ?? null,
   };
 }
 
@@ -166,4 +167,37 @@ export async function fetchWithdrawals(storeOwnerId: number): Promise<TrimmedWit
   const trimmed = data.map(trimWithdrawal);
   setCached(cacheKey, trimmed, 60);
   return trimmed;
+}
+
+export interface PublicStore {
+  id: number;
+  name: string;
+  businessCategory: string | null;
+  address: string | null;
+  storeDescription: string | null;
+  openingTime: string | null;
+  closingTime: string | null;
+  workingDays: string | null;
+}
+
+export async function fetchMerchantsPublic(): Promise<PublicStore[]> {
+  const cacheKey = 'merchants-public';
+  const cached = getCached<PublicStore[]>(cacheKey);
+  if (cached) return cached;
+
+  const data = await get<User[]>('/users');
+  const stores: PublicStore[] = data
+    .filter((u) => u.business)
+    .map((u) => ({
+      id: u.id,
+      name: `${u.first_name} ${u.last_name}`,
+      businessCategory: u.businessCategory,
+      address: u.address,
+      storeDescription: u.storeDescription,
+      openingTime: u.openingTime,
+      closingTime: u.closingTime,
+      workingDays: u.workingDays,
+    }));
+  setCached(cacheKey, stores, 120);
+  return stores;
 }
