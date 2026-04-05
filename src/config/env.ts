@@ -25,7 +25,8 @@ const envSchema = z.object({
   // Server
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  CORS_ORIGIN: z.string().default('http://localhost:4200'),
+  /** Orígenes extra (coma). Los dashboards business/owners en producción ya están incluidos en código. */
+  CORS_ORIGIN: z.string().default(''),
 });
 
 const parsed = envSchema.safeParse(process.env);

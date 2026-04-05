@@ -8,21 +8,40 @@ import ttsRoute from './routes/tts.route';
 import merchantChatRoute from './routes/merchant-chat.route';
 import supportChatRoute from './routes/support-chat.route';
 
+/**
+ * Siempre permitidos además de CORS_ORIGIN.
+ * - Web: Angular en :4200/:4300 y dashboards en producción.
+ * - App nativa: React Native/Expo suele no enviar Origin → el callback recibe undefined y se acepta (no aplica CORS de navegador).
+ * - Si Metro/Expo sí envía Origin (algunos entornos), :8081 evita bloqueos en desarrollo.
+ */
+const LIFE2FOOD_DASHBOARD_ORIGINS = [
+  'http://localhost:4200',
+  'http://localhost:4300',
+  'http://localhost:8081',
+  'http://127.0.0.1:8081',
+  'https://business.life2food.com',
+  'https://owners.life2food.com',
+];
+
 export function createApp() {
   const app = express();
 
   // ─── CORS ────────────────────────────────────────────────────────────────────
-  const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
+  const fromEnv = env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+  const allowedOrigins = [...new Set([...LIFE2FOOD_DASHBOARD_ORIGINS, ...fromEnv])];
   app.use(
     cors({
       origin: (origin, callback) => {
         if (!origin || allowedOrigins.includes(origin)) {
           callback(null, true);
         } else {
+          console.warn(
+            `[cors] blocked origin: ${origin}. Add it to CORS_ORIGIN on the server (currently allow: ${allowedOrigins.join(', ')})`,
+          );
           callback(new Error(`CORS blocked: ${origin}`));
         }
       },
-      methods: ['GET', 'POST'],
+      methods: ['GET', 'POST', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
     }),
   );
