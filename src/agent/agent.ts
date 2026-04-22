@@ -22,7 +22,11 @@ import {
   fetchProducts,
   fetchWithdrawals,
   fetchMerchantsPublic,
+  fetchUserOrders,
+  fetchUserCart,
+  addCartItem,
   type PublicStore,
+  type CartSummary,
 } from '../lib/springboot-client';
 import type { TrimmedProduct } from '../types/api.types';
 import type { ChatMessage, Insight } from '../types/agent.types';
@@ -181,71 +185,134 @@ export function merchantChatStream(
 
 // ─── Support chat (non-streaming) — for end users via mobile app ─────────────
 
-const supportTools = {
-  searchProducts: tool({
-    description:
-      'Search available products on the platform by keyword (product name) and/or category. Returns matching products with name, price, store, and category. Use this when the user asks for food recommendations or wants to find a specific product.',
-    parameters: z.object({
-      query: z.string().optional().describe('Keyword to search in product name (e.g. "pizza", "ensalada", "pollo")'),
-      category: z.string().optional().describe('Filter by category name (e.g. "Panadería", "Lácteos", "Frutas")'),
+const FOOD_EMOJIS = ['🍕', '🌮', '🍔', '🥗', '🍜', '🍣', '🥪', '🍗', '🥘', '🍰', '🧆', '🌯'];
+
+function createSupportTools(userId: number) {
+  return {
+    searchProducts: tool({
+      description:
+        'Search available products on the platform by keyword (product name) and/or category. Returns matching products with name, price, store, and category. Use this when the user asks for food recommendations or wants to find a specific product.',
+      parameters: z.object({
+        query: z.string().optional().describe('Keyword to search in product name (e.g. "pizza", "ensalada", "pollo")'),
+        category: z.string().optional().describe('Filter by category name (e.g. "Panadería", "Lácteos", "Frutas")'),
+      }),
+      execute: async ({ query, category }) => {
+        const products = await fetchProducts();
+        let results = products;
+        if (query) {
+          const q = query.toLowerCase();
+          results = results.filter(
+            (p) => p.name.toLowerCase().includes(q) || (p.category ?? '').toLowerCase().includes(q),
+          );
+        }
+        if (category) {
+          const cat = category.toLowerCase();
+          results = results.filter((p) => (p.category ?? '').toLowerCase().includes(cat));
+        }
+        return { total: results.length, products: results.slice(0, 20) };
+      },
     }),
-    execute: async ({ query, category }) => {
-      const products = await fetchProducts();
-      let results = products;
-      if (query) {
+
+    searchStores: tool({
+      description:
+        'Search stores/merchants on the platform by type of business or name. Returns store name, category, address, description, and hours. Use this when the user asks "¿qué tiendas hay?", "¿dónde compro X?", or wants to find a specific type of store.',
+      parameters: z.object({
+        query: z
+          .string()
+          .optional()
+          .describe('Keyword to search in store name, category, or address (e.g. "pizza", "restaurante", "panadería")'),
+      }),
+      execute: async ({ query }) => {
+        const stores = await fetchMerchantsPublic();
+        if (!query) return { total: stores.length, stores: stores.slice(0, 20) };
         const q = query.toLowerCase();
-        results = results.filter(
-          (p) => p.name.toLowerCase().includes(q) || (p.category ?? '').toLowerCase().includes(q),
+        const results = stores.filter(
+          (s) =>
+            s.name.toLowerCase().includes(q) ||
+            (s.businessCategory ?? '').toLowerCase().includes(q) ||
+            (s.address ?? '').toLowerCase().includes(q) ||
+            (s.storeDescription ?? '').toLowerCase().includes(q),
         );
-      }
-      if (category) {
-        const cat = category.toLowerCase();
-        results = results.filter((p) => (p.category ?? '').toLowerCase().includes(cat));
-      }
-      return { total: results.length, products: results.slice(0, 20) };
-    },
-  }),
-
-  searchStores: tool({
-    description:
-      'Search stores/merchants on the platform by type of business or name. Returns store name, category, address, description, and hours. Use this when the user asks "¿qué tiendas hay?", "¿dónde compro X?", or wants to find a specific type of store.',
-    parameters: z.object({
-      query: z
-        .string()
-        .optional()
-        .describe('Keyword to search in store name, category, or address (e.g. "pizza", "restaurante", "panadería")'),
+        return { total: results.length, stores: results.slice(0, 20) };
+      },
     }),
-    execute: async ({ query }) => {
-      const stores = await fetchMerchantsPublic();
-      if (!query) return { total: stores.length, stores: stores.slice(0, 20) };
-      const q = query.toLowerCase();
-      const results = stores.filter(
-        (s) =>
-          s.name.toLowerCase().includes(q) ||
-          (s.businessCategory ?? '').toLowerCase().includes(q) ||
-          (s.address ?? '').toLowerCase().includes(q) ||
-          (s.storeDescription ?? '').toLowerCase().includes(q),
-      );
-      return { total: results.length, stores: results.slice(0, 20) };
-    },
-  }),
 
-  listCategories: tool({
-    description:
-      'List all product categories available on the platform. Use this when the user asks what types of food or categories are available.',
-    parameters: z.object({}),
-    execute: async () => {
-      const products = await fetchProducts();
-      const categories = [...new Set(products.map((p) => p.category).filter(Boolean))].sort();
-      return { total: categories.length, categories };
-    },
-  }),
-};
+    listCategories: tool({
+      description:
+        'List all product categories available on the platform. Use this when the user asks what types of food or categories are available.',
+      parameters: z.object({}),
+      execute: async () => {
+        const products = await fetchProducts();
+        const categories = [...new Set(products.map((p) => p.category).filter(Boolean))].sort();
+        return { total: categories.length, categories };
+      },
+    }),
+
+    getUserOrders: tool({
+      description:
+        'Get the current user\'s active orders and their status. Use this when the user asks about their orders, "¿dónde está mi pedido?", "¿qué pedí?", or wants to know the status of a purchase. Only returns active orders (PENDING, PAID, PREPARING, READY) — completed and cancelled orders are excluded.',
+      parameters: z.object({}),
+      execute: async () => {
+        const orders = await fetchUserOrders(userId);
+        const active = orders.filter((o) => !['COMPLETED', 'CANCELLED'].includes(o.status));
+        return { total: active.length, orders: active };
+      },
+    }),
+
+    getCart: tool({
+      description:
+        'Get the current user\'s cart: items, quantities, prices, and total. Use this when the user asks "¿qué tengo en el carrito?", "¿cuánto llevo?", "¿cuánto es el total?", or wants to review their cart before paying.',
+      parameters: z.object({}),
+      execute: async () => {
+        return await fetchUserCart(userId);
+      },
+    }),
+
+    addToCart: tool({
+      description:
+        'Add a specific product to the user\'s cart. Use this ONLY when the user explicitly asks to add something (e.g. "agrega una pizza", "ponme eso en el carrito", "quiero comprar X"). You MUST know the product ID — call searchProducts first if needed. Confirm what was added after success.',
+      parameters: z.object({
+        productId: z.number().describe('The numeric ID of the product to add'),
+        productName: z.string().describe('Human-readable product name for confirmation'),
+        quantity: z.number().default(1).describe('Quantity to add (default 1)'),
+      }),
+      execute: async ({ productId, productName, quantity }) => {
+        await addCartItem(userId, productId, quantity ?? 1);
+        return { success: true, productId, productName, quantity: quantity ?? 1 };
+      },
+    }),
+
+    spinRoulette: tool({
+      description:
+        'Randomly pick a product for the user when they don\'t know what to eat. Use this when the user says "no sé qué comer", "elige por mí", "sorpréndeme", "ruleta", "da igual", or similar indecisive messages. This triggers a special spinning-wheel animation in the app.',
+      parameters: z.object({
+        category: z
+          .string()
+          .optional()
+          .describe('Optional food category to narrow the pick (e.g. "Panadería", "Comida rápida"). Leave empty for a fully random result.'),
+      }),
+      execute: async ({ category }) => {
+        const products = await fetchProducts();
+        let pool = products.filter((p) => (p.amount ?? 0) > 0);
+        if (category) {
+          const cat = category.toLowerCase();
+          const filtered = pool.filter((p) => (p.category ?? '').toLowerCase().includes(cat));
+          if (filtered.length > 0) pool = filtered;
+        }
+        if (pool.length === 0) return { product: null, emojis: FOOD_EMOJIS };
+        const chosen = pool[Math.floor(Math.random() * pool.length)];
+        return { product: chosen, emojis: FOOD_EMOJIS };
+      },
+    }),
+  };
+}
 
 export interface SupportChatResult {
   text: string;
   products: TrimmedProduct[];
   stores: PublicStore[];
+  cartUpdate: { success: boolean; productName: string; quantity: number } | null;
+  roulette: TrimmedProduct | null;
 }
 
 export async function supportChat(
@@ -255,6 +322,7 @@ export async function supportChat(
   history: ChatMessage[] = [],
 ): Promise<SupportChatResult> {
   const model = resolveModel();
+  const tools = createSupportTools(userId);
 
   const result = await generateText({
     model,
@@ -266,7 +334,7 @@ export async function supportChat(
       })),
       { role: 'user', content: message },
     ],
-    tools: supportTools,
+    tools,
     maxSteps: 5,
   });
 
@@ -279,6 +347,8 @@ export async function supportChat(
   // Extract structured results from tool calls across all steps
   const products: TrimmedProduct[] = [];
   const stores: PublicStore[] = [];
+  let cartUpdate: SupportChatResult['cartUpdate'] = null;
+  let roulette: TrimmedProduct | null = null;
 
   for (const step of result.steps) {
     for (const tr of (step.toolResults ?? []) as Array<{ toolName: string; result: any }>) {
@@ -286,6 +356,14 @@ export async function supportChat(
         products.push(...(tr.result.products ?? []));
       } else if (tr.toolName === 'searchStores') {
         stores.push(...(tr.result.stores ?? []));
+      } else if (tr.toolName === 'addToCart' && tr.result.success) {
+        cartUpdate = {
+          success: true,
+          productName: tr.result.productName,
+          quantity: tr.result.quantity,
+        };
+      } else if (tr.toolName === 'spinRoulette' && tr.result.product) {
+        roulette = tr.result.product as TrimmedProduct;
       }
     }
   }
@@ -294,6 +372,8 @@ export async function supportChat(
     text: fullText || 'Lo siento, no pude procesar tu solicitud. Intenta de nuevo.',
     products,
     stores,
+    cartUpdate,
+    roulette,
   };
 }
 

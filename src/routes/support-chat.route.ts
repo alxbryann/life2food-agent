@@ -42,6 +42,8 @@ router.post('/', verifyFirebaseToken, async (req: AuthRequest, res: Response) =>
       reply: result.text,
       products: result.products,
       stores: result.stores,
+      cartUpdate: result.cartUpdate,
+      roulette: result.roulette,
     });
   } catch (err) {
     console.error('[support-chat] error:', err);

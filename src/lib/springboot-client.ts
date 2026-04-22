@@ -35,6 +35,23 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const token = getSpringBootFirebaseToken();
+  const requestHeaders: Record<string, string> = {
+    ...headers,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: requestHeaders,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Spring Boot API error: ${res.status} ${res.statusText} — POST ${path}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // ─── Helpers to trim nested objects ─────────────────────────────────────────
 
 function trimOrder(o: Order): TrimmedOrder {
@@ -200,4 +217,43 @@ export async function fetchMerchantsPublic(): Promise<PublicStore[]> {
     }));
   setCached(cacheKey, stores, 120);
   return stores;
+}
+
+// ─── User-scoped APIs (require auth token) ───────────────────────────────────
+
+export interface CartItemSummary {
+  productId: number;
+  productName: string;
+  quantity: number;
+  price: number;
+  imageUrl: string | null;
+}
+
+export interface CartSummary {
+  itemCount: number;
+  total: number;
+  items: CartItemSummary[];
+}
+
+export async function fetchUserOrders(userId: number): Promise<TrimmedOrder[]> {
+  const data = await get<Order[]>(`/api/orders/${userId}`);
+  return data.map(trimOrder);
+}
+
+export async function fetchUserCart(userId: number): Promise<CartSummary> {
+  const raw = await get<any>(`/cart/${userId}`);
+  const rawItems: any[] = raw.items ?? raw.cartItems ?? [];
+  const items: CartItemSummary[] = rawItems.map((item) => ({
+    productId: item.productId ?? item.product?.id ?? item.id,
+    productName: item.productName ?? item.product?.name ?? 'Producto',
+    quantity: item.quantity ?? 1,
+    price: item.price ?? item.product?.price ?? 0,
+    imageUrl: item.imageUrl ?? item.product?.imageUrl ?? null,
+  }));
+  const total = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  return { itemCount: items.length, total, items };
+}
+
+export async function addCartItem(userId: number, productId: number, quantity: number): Promise<void> {
+  await post<unknown>(`/cart/${userId}/items`, { productId, quantity });
 }
