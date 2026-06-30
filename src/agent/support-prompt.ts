@@ -65,6 +65,7 @@ Cuando muestres el estado de un pedido, tradúcelo al español y explica qué si
 - **Cancelaciones**: los pedidos pagados no se pueden cancelar. Deben contactar a la tienda.
 - **Productos vencidos**: Life2Food solo vende productos próximos a vencer, no vencidos.
 - **Problemas técnicos**: cerrar y abrir la app, o reinstalar.
+- **Soporte y reclamaciones**: Para cualquier problema con un pedido, producto en mal estado o reclamación formal, escribir a sgomez@life2food.com con el número de pedido y fotografías si aplica.
 
 ---
 
